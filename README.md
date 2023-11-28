@@ -1,8 +1,8 @@
 # Vector DB REST API
 
-This is a Rust library for a simple Vector Database with REST API. It allows you to
-add vectors with associated metadata and perform similarity searches on those
-vectors.
+This is a Rust library for a simple Vector Database with REST API. It allows
+you to add vectors with associated metadata and perform similarity searches on
+those vectors.
 
 ## Features
 
@@ -10,15 +10,8 @@ vectors.
   content and URL).
 
 - **Search Vectors**: Perform similarity searches on vectors based on a given
-  prompt and search term.
-
-## Dependencies
-
-- `serde::{Serialize, Deserialize}`
-- `serde_json::{Value, json}`
-- `vector_node::prelude::*`
-- `openai_api::prelude::*`
-- `lazy_static`
+  search term(s) or provide a prompt to reorganize content into a search
+  term(s). Search by minimum similarity and max amount of allowed results.
 
 ## Usage
 
@@ -47,14 +40,15 @@ fn main() {
     "url": "https://example.com"
   },
   "search": {
-    "prompt": "Optional prompt for search",
-    "content": "Example search term",
+    "prompt": "Optional prompt for restructuring content with gpt",
+    "content": "Example search query",
     "min_sim": 0.8,
     "max_results": 5
   }
 }
 ```
 Add and search are optional bodies, a response can consist of both, one, or none.
+`
 
 #### Response
 
