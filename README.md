@@ -27,16 +27,16 @@ use vector_db_api::{ApiQuery, run_server};
 
 fn main() {
     let addr = "127.0.0.1:3000".to_string();
-    let new_db_path = "./new_serialized_vector_db.json".to_string();
+    let db_path = "./serialized_vector_db.json".to_string();
 
     // Run the server
-    vector_db_api::run_server(addr, new_db_path);
+    vector_db_api::run_server(addr, db_path);
 }
 ```
 
 ## API Endpoints
 
-### `POST /query`
+### `POST /
 
 #### Request Body
 
@@ -54,6 +54,7 @@ fn main() {
   }
 }
 ```
+Add and search are optional bodies, a response can consist of both, one, or none.
 
 #### Response
 

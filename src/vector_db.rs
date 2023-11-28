@@ -1,7 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use serde::{Serialize, Deserialize};
-use serde_json::{Value, json};
 use vector_node::prelude::*;
 use openai_api::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -214,7 +213,14 @@ fn get_add_embeddings(content: String) -> Result< Vec<f64>, NodeError> {
 
 pub fn run_server(addr: String, new_db_path: String) {
     if let Ok(mut db_path) = DB_PATH.lock() {
-        *db_path = new_db_path;
+        *db_path = new_db_path.clone();
+        if let Ok(mut parent_node) = PARENT_NODE.0.lock() {
+            if let Ok(node) = Node::load_model(&new_db_path){
+                *parent_node = node
+            } else {
+                println!("No serialized DB found. Starting new DB");
+            };
+        }
     };
     
     let listener = TcpListener::bind(&addr).expect("Failed to bind to address");
