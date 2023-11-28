@@ -13,28 +13,44 @@ lazy_static::lazy_static! {
 #[derive(Debug,Serialize, Deserialize)]
 pub enum QueryState {
     Added,
-    Searched,
-    AddSearch,
+    Searched(Vec<(f64, String, u32)>),
+    AddSearch(Vec<(f64, String, u32)>),
     ParseFailed,
     DidNothing,
 }
 
+
+#[derive(Debug,Serialize, Deserialize)]
+pub struct SearchResult{
+    cos_sim: f64,
+    url: String,
+    search_tally: u32
+}
+
 #[derive(Debug,Serialize, Deserialize)]
 pub struct ApiResponse {
-    body: &'static str,
-    state: QueryState
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<Vec<(f64, String, u32)>>
 }
 
 impl ApiResponse {
     pub fn from(state: QueryState) -> ApiResponse {
-        let body: &'static str = match state{
+        let mut content: Option<Vec<(f64, String, u32)>> = None;
+        let state: &'static str = match state{
             QueryState::Added => {"Add response was sucessful"},
-            QueryState::Searched => {"Search response was sucessful"},
-            QueryState::AddSearch => {"AddSearch response was sucessful"},
+            QueryState::Searched(search_content) => {
+                content = Some(search_content);
+                "Search response was sucessful"
+            },
+            QueryState::AddSearch(search_content) => {
+                content = Some(search_content);
+                "AddSearch response was sucessful"
+            },
             QueryState::ParseFailed => {"Parsing request failed"},
             QueryState::DidNothing => {"No Add or Search request found, what are you trying to do?"},
         };
-        ApiResponse { body , state }
+        ApiResponse { state, content}
     }
 
     pub fn send(&self, mut stream: TcpStream) {
@@ -112,13 +128,20 @@ fn handle_add_request(add_query: AddQuery) {
 
 }
 
-fn handle_search_request(search_query: SearchQuery) {
-    let embeddings = get_search_embeddings(search_query.prompt, search_query.content);
-    if let Ok(parent_node) = PARENT_NODE.0.lock() {
-        if let Ok(embeddings) = embeddings {
-            parent_node.search(search_query.min_sim, search_query.max_results, &embeddings);
-        }
-    };
+fn handle_search_request(search_query: SearchQuery) -> Vec<(f64, String, u32)>{
+        let embeddings = get_search_embeddings(search_query.prompt, search_query.content);
+
+    match PARENT_NODE.0.lock() {
+        Ok(parent_node) => {
+            match embeddings {
+                Ok(embeddings) => {
+                    parent_node.search(search_query.min_sim, search_query.max_results, &embeddings)
+                },
+                Err(_) => {Vec::new()}
+            }
+        },
+        Err(_) => {Vec::new()}
+    }
 }
 
 fn handle_client(mut stream: TcpStream) {
@@ -156,11 +179,11 @@ fn handle_client(mut stream: TcpStream) {
     }
 
     if let Some(search_query) = api_query.search {
+        let search_results = handle_search_request(search_query);
         query_state = match query_state {
-            QueryState::Added => { QueryState::AddSearch },
-            _ => { QueryState::Searched }
+            QueryState::Added => { QueryState::AddSearch(search_results) },
+            _ => { QueryState::Searched(search_results) }
         };
-        handle_search_request(search_query);
     }
 
     let response = ApiResponse::from(query_state);
