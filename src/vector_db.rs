@@ -4,22 +4,89 @@ use serde::{Serialize, Deserialize};
 use serde_json::{Value, json};
 use vector_node::prelude::*;
 use openai_api::prelude::*;
+use std::sync::{Arc, Mutex};
 
 lazy_static::lazy_static! {
     static ref PARENT_NODE: MutexWrapper<Node> = Node::new(0, Vec::<f64>::new(), String::new());
-    static ref DB_PATH: String = String::from("./serialized_vector_db.json");
+    static ref DB_PATH: Arc<Mutex<String>> = Arc::new(Mutex::new("./serialized_vector_db.json".to_string()));
 }
 
 #[derive(Debug,Serialize, Deserialize)]
-struct ApiQuery {
+pub enum QueryState {
+    Added,
+    Searched,
+    AddSearch,
+    ParseFailed,
+    DidNothing,
+}
+
+#[derive(Debug,Serialize, Deserialize)]
+pub struct ApiResponse {
+    body: &'static str,
+    state: QueryState
+}
+
+impl ApiResponse {
+    pub fn from(state: QueryState) -> ApiResponse {
+        let body: &'static str = match state{
+            QueryState::Added => {"Add response was sucessful"},
+            QueryState::Searched => {"Search response was sucessful"},
+            QueryState::AddSearch => {"AddSearch response was sucessful"},
+            QueryState::ParseFailed => {"Parsing request failed"},
+            QueryState::DidNothing => {"No Add or Search request found, what are you trying to do?"},
+        };
+        ApiResponse { body , state }
+    }
+
+    pub fn send(&self, mut stream: TcpStream) {
+
+        let response_body = serde_json::to_string(&self).unwrap();
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            response_body.len(),
+            response_body
+        );
+
+        stream.write_all(response.as_bytes()).expect("Failed to write to stream");
+    }
+    
+}
+
+#[derive(Debug,Serialize, Deserialize)]
+pub struct ApiQuery {
     #[serde(default)]
     add: Option<AddQuery>,
     #[serde(default)]
     search:  Option<SearchQuery>,
 }
 
+impl ApiQuery {
+    pub fn add_query(content: String, url: String) -> ApiQuery {
+        ApiQuery { 
+            add: Some(AddQuery{content, url}), 
+            search: None 
+        }
+    }
+    pub fn search_query(prompt: Option<String>,
+                            content: String, 
+                            min_sim: f64,
+                            max_results: usize
+    ) -> ApiQuery {
+        ApiQuery { 
+            add: None,
+            search: Some(SearchQuery { 
+                prompt,
+                content,
+                min_sim,
+                max_results 
+            }) 
+        }
+    }
+}
+
 #[derive(Debug,Serialize, Deserialize)]
-struct SearchQuery {
+pub struct SearchQuery {
     #[serde(default)]
     prompt: Option<String>,
     content: String,
@@ -28,7 +95,7 @@ struct SearchQuery {
 }
 
 #[derive(Debug,Serialize, Deserialize)]
-struct AddQuery {
+pub struct AddQuery {
     content: String,
     url: String
 }
@@ -38,10 +105,11 @@ fn handle_add_request(add_query: AddQuery) {
     if let Ok(mut parent_node) = PARENT_NODE.0.lock() {
         if let Ok(embeddings) = embeddings {
             parent_node.add_child(embeddings, add_query.url);
-            parent_node.save_to_file(DB_PATH.to_owned());
+            if let Ok(db_path) = DB_PATH.lock() {
+                parent_node.save_to_file(db_path.to_owned());
+            }
         }
     };
-
 
 }
 
@@ -70,38 +138,37 @@ fn handle_client(mut stream: TcpStream) {
     let body = body[0..content_len].to_owned();
 
 
+    let mut query_state: QueryState = QueryState::DidNothing;
+
     let api_query: ApiQuery = match serde_json::from_str(&body) {
         Ok(data) => data,
         Err(e) => {
+            let response = ApiResponse::from(QueryState::ParseFailed);
+            response.send(stream);
             eprintln!("Error parsing JSON: {}", e);
-            return;
+            return
         }
     };
     
 
     if let Some(add_query) = api_query.add {
+        query_state = QueryState::Added;
         handle_add_request(add_query);
     }
 
     if let Some(search_query) = api_query.search {
+        query_state = match query_state {
+            QueryState::Added => { QueryState::AddSearch },
+            _ => { QueryState::Searched }
+        };
         handle_search_request(search_query);
     }
 
-    let response_body = serde_json::to_string(&Option::<i32>::None).unwrap();
-
-    println!("{}", response_body.len());
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-        response_body.len(),
-        response_body
-    );
-
-
-    // Send the response
-    stream.write_all(response.as_bytes()).expect("Failed to write to stream");
+    let response = ApiResponse::from(query_state);
+    response.send(stream);
 }
 
-pub fn get_search_embeddings(prompt: Option<String>, search_term: String) -> Result< Vec<f64>, NodeError> {
+fn get_search_embeddings(prompt: Option<String>, search_term: String) -> Result< Vec<f64>, NodeError> {
     match prompt {
         Some(prompt) => {
             let chat_request = gpt35!(
@@ -132,7 +199,7 @@ pub fn get_search_embeddings(prompt: Option<String>, search_term: String) -> Res
 }
 
 
-pub fn get_add_embeddings(content: String) -> Result< Vec<f64>, NodeError> {
+fn get_add_embeddings(content: String) -> Result< Vec<f64>, NodeError> {
     let embeddings = EmbeddingRequest::new(content).get();
     match embeddings {
         Ok(embeddings) => {
@@ -145,13 +212,14 @@ pub fn get_add_embeddings(content: String) -> Result< Vec<f64>, NodeError> {
     }
 }
 
+pub fn run_server(addr: String, new_db_path: String) {
+    if let Ok(mut db_path) = DB_PATH.lock() {
+        *db_path = new_db_path;
+    };
+    
+    let listener = TcpListener::bind(&addr).expect("Failed to bind to address");
 
-
-fn main() {
-    // Bind the server to an address
-    let listener = TcpListener::bind("127.0.0.1:3000").expect("Failed to bind to address");
-
-    println!("Vector DB REST API running on http://127.0.0.1:3000/");
+    println!("Vector DB REST API running on http://{}/", &addr);
 
     // Accept and handle incoming connections
     for stream in listener.incoming() {
@@ -165,4 +233,3 @@ fn main() {
         }
     }
 }
-
