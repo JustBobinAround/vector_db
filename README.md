@@ -1,67 +1,46 @@
-# Vector DB REST API
+# Vector_DB Python Integration
 
-This is a Rust library for a simple Vector Database with REST API. It allows
-you to add vectors with associated metadata and perform similarity searches on
-those vectors.
+## Overview
 
-## Features
+rs_vector_db is a Rust-based project designed for efficient vector storage and
+similarity search. This README provides guidance on integrating Vector_DB with
+Python. The integration allows you to run the Vector_DB server and perform
+vector addition and similarity searches using Python scripts.
 
-- **Add Vectors**: Add vectors to the database with associated metadata (e.g.,
-  content and URL).
+## Installation
 
-- **Search Vectors**: Perform similarity searches on vectors based on a given
-  search term(s) or provide a prompt to reorganize content into a search
-  term(s). Search by minimum similarity and max amount of allowed results.
-
-## Usage
-
-```rust
-use vector_db_api::{ApiQuery, run_server};
-
-fn main() {
-    let addr = "127.0.0.1:3000".to_string();
-    let db_path = "./serialized_vector_db.json".to_string();
-
-    // Run the server
-    vector_db_api::run_server(addr, db_path);
-}
+```bash
+pip install rs_vector_db
 ```
 
-## API Endpoints
+## Example Usage
 
-### `POST /
+```python
+from vector_db import run_server, vector_search, add_vector
+import time
 
-#### Request Body
+URL = "http://127.0.0.1:3000"
 
-```json
-{
-  "add": {
-    "content": "Example content",
-    "url": "https://example.com"
-  },
-  "search": {
-    "prompt": "Optional prompt for restructuring content with gpt",
-    "content": "Example search query",
-    "min_sim": 0.8,
-    "max_results": 5
-  }
-}
-```
-Add and search are optional bodies, a response can consist of both, one, or none.
-`
+# Start Vector_DB server on its own thread
+run_server("127.0.0.1:3000", "./metal_gear_db.json")
 
-#### Response
+# Wait for the server to initialize - this might not be necessary
+time.sleep(1)
 
-```json
-{
-  "body": "Add response was successful",
-  "state": "Added"
-}
+# Add a vector to the DB
+results = add_vector(URL, "Why are we still here to suffer", "https://www.youtube.com/watch?v=N_vJMHMBzLM")
+print(results)
+
+results = vector_search(URL, "I can still feel the pain in my leg and in my arm", 0.2, 9000)
+
+print(results)
 ```
 
-## Configuration
-- **DB_PATH**: The path to the serialized vector database file.
+## Contributing
+
+If you encounter any issues or have suggestions for improvements, feel free to
+open an issue or submit a pull request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the [MIT License](LICENSE).

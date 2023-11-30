@@ -1,9 +1,12 @@
+use reqwest::blocking::Client;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use serde::{Serialize, Deserialize};
 use vector_node::prelude::*;
 use openai_api::prelude::*;
 use std::sync::{Arc, Mutex};
+use pyo3::prelude::*;
+
 
 lazy_static::lazy_static! {
     static ref PARENT_NODE: MutexWrapper<Node> = Node::new(0, Vec::<f64>::new(), String::new());
@@ -27,9 +30,9 @@ pub struct SearchResult{
     search_tally: u32
 }
 
-#[derive(Debug,Serialize, Deserialize)]
+#[derive(Clone, Debug,Serialize, Deserialize)]
 pub struct ApiResponse {
-    state: &'static str,
+    state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<Vec<(f64, String, u32)>>
 }
@@ -37,7 +40,7 @@ pub struct ApiResponse {
 impl ApiResponse {
     pub fn from(state: QueryState) -> ApiResponse {
         let mut content: Option<Vec<(f64, String, u32)>> = None;
-        let state: &'static str = match state{
+        let state = match state{
             QueryState::Added => {"Add response was sucessful"},
             QueryState::Searched(search_content) => {
                 content = Some(search_content);
@@ -50,7 +53,7 @@ impl ApiResponse {
             QueryState::ParseFailed => {"Parsing request failed"},
             QueryState::DidNothing => {"No Add or Search request found, what are you trying to do?"},
         };
-        ApiResponse { state, content}
+        ApiResponse { state: state.to_owned(), content}
     }
 
     pub fn send(&self, mut stream: TcpStream) {
@@ -65,7 +68,7 @@ impl ApiResponse {
 
         stream.write_all(response.as_bytes()).expect("Failed to write to stream");
     }
-    
+
 }
 
 #[derive(Debug,Serialize, Deserialize)]
@@ -98,6 +101,31 @@ impl ApiQuery {
             }) 
         }
     }
+
+    pub fn get_as_string(&self, url: String) -> Option<String>{
+        let client = Client::new();
+
+        let response = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .json(&self) // Serialize the JSON body
+            .send();
+
+        match response {
+            Ok(response) => {
+                match response.json::<ApiResponse>() {
+                    Ok(response) => {
+                            match serde_json::to_string(&response) {
+                                Ok(response) => {Some(response)},
+                                Err(_) => { None }
+                            }
+                    }
+                    Err(_) => { None }
+                }
+            },
+            Err(_) => { None }
+        }
+    }
 }
 
 #[derive(Debug,Serialize, Deserialize)]
@@ -124,12 +152,13 @@ fn handle_add_request(add_query: AddQuery) {
                 parent_node.save_to_file(db_path.to_owned());
             }
         }
+        //TODO: add error handling for failed get_add_embeddings
     };
 
 }
 
 fn handle_search_request(search_query: SearchQuery) -> Vec<(f64, String, u32)>{
-        let embeddings = get_search_embeddings(search_query.prompt, search_query.content);
+    let embeddings = get_search_embeddings(search_query.prompt, search_query.content);
 
     match PARENT_NODE.0.lock() {
         Ok(parent_node) => {
@@ -153,11 +182,33 @@ fn handle_client(mut stream: TcpStream) {
     println!("Received request:\n{}", request);
     let mut parts = request.split("\r\n\r\n");
     let header = parts.next().expect("Didnt find header");
-    let header: Vec<&str> = header.split(':').into_iter().collect();
-    println!("{:?}", header);
-    let content_len = header.last().unwrap().trim().parse::<usize>().unwrap();
+    let header: Vec<&str> = header.split('\n').into_iter().collect();
+    //println!("{:?}", header);
+    let content_len: Vec<usize> = header
+        .into_iter()
+        .filter_map(|s|{
+            if s.starts_with("content-length:") {
+                let s = s.replace("content-length:", "");
+                match s.trim().parse::<usize>() {
+                    Ok(size) => { 
+                        println!("Found content len: {}", size);
+                        Some(size) 
+                    },
+                    Err(_) => { None }
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+    let content_len = match content_len.last() {
+        Some(content_len) => {
+            content_len
+        },
+        None => { return }
+    };
     let body = format!( "{}", parts.next().expect("Didn't get json body").trim());
-    let body = body[0..content_len].to_owned();
+    let body = body[0..(content_len+0)].to_owned();
 
 
     let mut query_state: QueryState = QueryState::DidNothing;
@@ -201,7 +252,7 @@ fn get_search_embeddings(prompt: Option<String>, search_term: String) -> Result<
             match chat_request {
                 Ok(chat_request) => {
                     let choice = chat_request.default_choice();
-                    println!("{}", choice);
+                    //println!("{}", choice);
                     let embeddings = EmbeddingRequest::new(choice).get();
                     match embeddings {
                         Ok(embeddings) => {
@@ -233,8 +284,13 @@ fn get_add_embeddings(content: String) -> Result< Vec<f64>, NodeError> {
         Err(err_msg) => { Err(NodeError { msg: err_msg.message })}
     }
 }
+#[pyfunction]
+pub fn run_server(addr: String, db_path: String) {
+    std::thread::spawn(||{run_server_blocking(addr, db_path)});
+}
 
-pub fn run_server(addr: String, new_db_path: String) {
+#[pyfunction]
+pub fn run_server_blocking(addr: String, new_db_path: String) {
     if let Ok(mut db_path) = DB_PATH.lock() {
         *db_path = new_db_path.clone();
         if let Ok(mut parent_node) = PARENT_NODE.0.lock() {
@@ -262,3 +318,43 @@ pub fn run_server(addr: String, new_db_path: String) {
         }
     }
 }
+#[pyfunction]
+pub fn prompted_search(
+    url: String,
+    prompt: String,
+    content: String,
+    min_sim: f64,
+    max_results: usize
+) -> Option<String> {
+    ApiQuery::search_query(Some(prompt), content, min_sim, max_results).get_as_string(url)
+}
+
+#[pyfunction]
+pub fn vector_search(
+    url: String,
+    content: String,
+    min_sim: f64,
+    max_results: usize
+) -> Option<String> {
+    ApiQuery::search_query(None, content, min_sim, max_results).get_as_string(url)
+}
+
+#[pyfunction]
+pub fn add_vector(
+    url: String,
+    content: String,
+    link: String
+) -> Option<String> {
+    ApiQuery::add_query(content, link).get_as_string(url)
+}
+
+#[pymodule]
+fn vector_db(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(run_server, m)?)?;
+    m.add_function(wrap_pyfunction!(run_server_blocking, m)?)?;
+    m.add_function(wrap_pyfunction!(prompted_search, m)?)?;
+    m.add_function(wrap_pyfunction!(vector_search, m)?)?;
+    m.add_function(wrap_pyfunction!(add_vector, m)?)?;
+    Ok(())
+}
+
