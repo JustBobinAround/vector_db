@@ -7,6 +7,11 @@ similarity search. This README provides guidance on integrating Vector_DB with
 Python. The integration allows you to run the Vector_DB server and perform
 vector addition and similarity searches using Python scripts.
 
+## **THIS REQUIRES AN OPENAPI KEY**
+```
+export OPENAI_API_KEY="your-key-here";
+```
+
 ## Installation
 
 ```bash
@@ -16,7 +21,7 @@ pip install rs_vector_db
 ## Example Usage
 
 ```python
-from vector_db import run_server, vector_search, add_vector
+from rs_vector_db import run_server, vector_search, add_vector
 import time
 
 URL = "http://127.0.0.1:3000"
@@ -40,6 +45,13 @@ print(results)
 
 If you encounter any issues or have suggestions for improvements, feel free to
 open an issue or submit a pull request.
+
+## Notes for myself
+```
+maturin publish
+__token__
+key
+```
 
 ## License
 

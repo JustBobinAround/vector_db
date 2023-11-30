@@ -349,7 +349,7 @@ pub fn add_vector(
 }
 
 #[pymodule]
-fn vector_db(_py: Python, m: &PyModule) -> PyResult<()> {
+fn rs_vector_db(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_server, m)?)?;
     m.add_function(wrap_pyfunction!(run_server_blocking, m)?)?;
     m.add_function(wrap_pyfunction!(prompted_search, m)?)?;
