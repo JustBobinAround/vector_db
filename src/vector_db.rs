@@ -175,7 +175,7 @@ fn handle_search_request(search_query: SearchQuery) -> Vec<(f64, String, u32)>{
 
 fn handle_client(mut stream: TcpStream) {
     // Read the incoming request
-    let mut buffer = [0; 1024];
+    let mut buffer = [0; 10000];
     stream.read(&mut buffer).expect("Failed to read from stream");
     let request = String::from_utf8_lossy(&buffer[..]);
 
